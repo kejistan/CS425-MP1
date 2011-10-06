@@ -2,6 +2,8 @@
 
 #include <pthread.h>
 #include <unistd.h>
+#include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +25,15 @@ typedef struct
 
 } sendq_item;
 
+/* Vector Clock, implemented as a singly linked list keeps a counter for
+ * each peer. */
+typedef struct vclock
+{
+	uint32_t id;
+	uint32_t time;
+	struct vclock *next;
+} vclock_t;
+
 /* Unicast sequence number and message sequence ID number */
 unsigned int msg_sequence = 0;
 
@@ -35,6 +46,63 @@ unsigned int sendq_length = 0;
 unsigned int sendq_alloc = 0;
 
 sendq_item **sendq_array;
+
+vclock_t *vclock_find_id(uint32_t id, vclock_t *clock)
+{
+	while (clock) {
+		if (id == clock->id) return clock;
+		clock = clock->next;
+	}
+
+	return NULL;
+}
+
+/* returns negative if a precedes b, 0 if a is concurrent to b,
+ * and positive if a succeeds b */
+int vclock_compare(vclock_t *a, vclock_t *b)
+{
+	int difference = 0;
+	vclock_t *a_current = a;
+	vclock_t *b_current;
+
+	while (a_current) {
+		b_current = vclock_find_id(a_current->id, b);
+		if (b_current) {
+			int distance = a_current->time - b_current->time;
+			/* if there is a difference we are concurrent if any of the
+			 * timestamps does not agree with that difference */
+			if (difference < 0 && distance > 0) {
+				return 0;
+			}
+			if (difference > 0 && distance < 0) {
+				return 0;
+			}
+			difference += distance;
+		} else {
+			/* the two vector clocks disagree on membership, as membership only
+			 * increases a must not have ocurred before b. */
+			if (difference < 0) return 0;
+			difference += a_current->time;
+		}
+
+		a_current = a_current->next;
+	}
+
+	/* check for membership disagreement backwards as well */
+	b_current = b;
+	while (b_current) {
+		if (!vclock_find_id(b_current->id, a)) {
+			/* the two vector clocks disagree on membership, as membership only
+			 * increases b must not have occurred before a. */
+			if (difference > 0) return 0;
+			difference -= b_current->time;
+		}
+
+		b_current = b_current->next;
+	}
+
+	return difference;
+}
 
 /* reliable unicast send.  this fn wraps the unicast with a message
  * sequence number and will send it with reliabilty. */
@@ -102,6 +170,11 @@ void multicast(const char *message) {
         r_usend(mcast_members[i], message);
     }
     pthread_mutex_unlock(&member_lock);
+}
+
+void co_multicast(const char *message)
+{
+	
 }
 
 /* Fail a member in our list, remove it and tell everyone
