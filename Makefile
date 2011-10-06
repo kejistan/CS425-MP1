@@ -7,7 +7,7 @@ mp1: $(SOURCEFILES) $(HEADERS)
 	gcc -pthread -o $@ $(SOURCEFILES)
 
 clean:	restart
-	-rm mp1 *.o
+	-rm -f mp1 *.o
 
 restart:
-	-rm GROUPFILE
+	-rm -f GROUPLIST
