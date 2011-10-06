@@ -9,6 +9,9 @@
 #define RSEND_TIME 50 /* 50 milliseconds between ticks for RSEND */
 #define RSEND_TICKS 10 /* wait 10 ticks of the rsend queue before trying again */
 #define RSEND_TRIES 4 /* 4 attempts for rsend */
+#define PING_TICKS 20
+#define PING_TRIES 4
+#define PING_INTERVAL 500 + PING_TICKS * PING_TRIES
 
 /* Structure for a item in the send queue.  We keep
  * a message, the message id, the number of send attempts,
@@ -20,6 +23,7 @@ typedef struct
     int dest;
     unsigned int n_sends;
     unsigned int n_ticks;
+    char msg_type;
 
 } sendq_item;
 
@@ -38,7 +42,7 @@ sendq_item **sendq_array;
 
 /* reliable unicast send.  this fn wraps the unicast with a message
  * sequence number and will send it with reliabilty. */
-void r_usend(int dest, const char *message)
+void r_usend(int dest, const char *message, char msg_type)
 {
     sendq_item *item;
 
@@ -50,7 +54,7 @@ void r_usend(int dest, const char *message)
         return;
     }
 
-    item->msg = (char*) calloc(sizeof(char), 64+strlen(message));
+    item->msg = (char*) calloc(sizeof(char), 16+strlen(message));
     if (item->msg == NULL)
     {
         fprintf(stderr, "Error: could not malloc for r_usend\n");
@@ -67,9 +71,10 @@ void r_usend(int dest, const char *message)
     item->dest = dest;
     item->n_sends = 1;
     item->n_ticks = 0;
+    item->msg_type = msg_type;
 
     /* prepare our outgoing message */
-    snprintf(item->msg, 63+strlen(message), "m:%u:%s", msg_sequence, message);
+    snprintf(item->msg, 15+strlen(message), "%c:%u:%s", msg_type, msg_sequence, message);
 
     /* send message */
     usend(dest, item->msg);
@@ -93,15 +98,21 @@ void r_usend(int dest, const char *message)
     return;
 }
 
-/* Basic multicast implementation */
-void multicast(const char *message) {
+/* reliable multicast implementation.  uses a reliable unicast
+ * to provide a reliable multicast.  */
+void r_multicast(const char *message, char msg_type) {
     int i;
     
     pthread_mutex_lock(&member_lock);
     for (i = 0; i < mcast_num_members; i++) {
-        r_usend(mcast_members[i], message);
+        r_usend(mcast_members[i], message, msg_type);
     }
     pthread_mutex_unlock(&member_lock);
+}
+
+void multicast(const char *message)
+{
+    r_multicast(message, 'm');
 }
 
 /* Fail a member in our list, remove it and tell everyone
@@ -135,10 +146,23 @@ int fail_member(int member)
 /* thread for handling resending un-acked unicast messages */
 void *r_send_thread_main(void *discard)
 {
-    int i;
+    int i, ping_counter = 0;
+    int max_ticks, max_tries;
+
+    r_multicast("", 'p');
 
     while (1)
     {
+        if (ping_counter == PING_INTERVAL)
+        {
+            r_multicast("", 'p');
+            ping_counter = 0;
+        }
+        else
+        {
+            ping_counter++;
+        }
+
         /* sleep for specified time */
         usleep( RSEND_TIME * 1000 );
 
@@ -151,13 +175,25 @@ void *r_send_thread_main(void *discard)
         {
             for (i = 0; i < sendq_length; i++)
             {
-                if (sendq_array[i]->n_ticks < RSEND_TICKS)
+                switch (sendq_array[i]->msg_type)
+                {
+                    case 'p':
+                        max_ticks = PING_TICKS;
+                        max_tries = PING_TRIES;
+                        break;
+                    default:
+                        max_ticks = RSEND_TICKS;
+                        max_tries = RSEND_TRIES;
+                        break;
+                }
+
+                if (sendq_array[i]->n_ticks < max_ticks)
                 {
                     sendq_array[i]->n_ticks++;
                 }
                 else
                 {
-                    if (sendq_array[i]->n_sends < RSEND_TRIES)
+                    if (sendq_array[i]->n_sends < max_tries)
                     {
                         usend(sendq_array[i]->dest, sendq_array[i]->msg);
                         sendq_array[i]->n_sends++;
@@ -165,7 +201,8 @@ void *r_send_thread_main(void *discard)
                     }
                     else
                     {
-                        fail_member(sendq_array[i]->dest);
+                        if (sendq_array[i]->dest != my_id);
+                            fail_member(sendq_array[i]->dest);
                         free(sendq_array[i]->msg);
                         free(sendq_array[i]);
                         sendq_array[i] = sendq_array[sendq_length - 1];
@@ -183,6 +220,15 @@ void *r_send_thread_main(void *discard)
 
 }
 
+void exit_handler(void)
+{
+    r_multicast("", 'f');
+
+    if (mcast_num_members == 1)
+    {
+        unlink(GROUP_FILE);
+    }
+}
 
 void multicast_init(void) {
     unicast_init();
@@ -204,6 +250,8 @@ void multicast_init(void) {
         fprintf(stderr, "Could not create worker thread for r_usend\n");
         exit(1);
     }
+
+    atexit(exit_handler);
 }
 
 /* receive callback */
@@ -271,10 +319,21 @@ void receive(int source, const char *message) {
             pthread_mutex_unlock(&sendq_lock);
             break;
 
+        case 'p':
+            msg_ptr += 2;
+
+            msg_id = atoi(msg_ptr);
+
+            snprintf(msg_resp, 511, "a:%u", msg_id);
+            usend(source, msg_resp);
+
+            break;
+
         default:
             break;
 
     }
 
 }
+
 
