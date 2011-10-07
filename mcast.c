@@ -33,9 +33,9 @@ typedef struct
  * each peer. */
 typedef struct vclock
 {
-	uint32_t id;
-	uint32_t time;
 	struct vclock *next;
+	uint32_t time;
+	uint16_t id;
 } vclock_t;
 
 /* Unicast sequence number and message sequence ID number */
@@ -49,9 +49,53 @@ pthread_t r_send_thread;
 unsigned int sendq_length = 0;
 unsigned int sendq_alloc = 0;
 
+/* Vector clock, holds sequence information for co_multicast messages */
+vclock_t *local_clock = NULL;
+pthread_mutex_t local_clock_lock;
+
 sendq_item **sendq_array;
 
-vclock_t *vclock_find_id(uint32_t id, vclock_t *clock)
+/* store number in base 36 in string, return the number of non-null characters
+ * written */
+size_t base36_encode(uint32_t number, char *string)
+{
+	size_t characters = 0;
+
+	if (number == 0) {
+		string[characters++] = '0';
+	}
+
+	while (number) {
+		uint16_t digit = number % 36;
+		char c = '\0';
+		number = number / 36;
+
+		if (digit < 10) {
+			c = digit + 0x30;
+		} else {
+			c = digit - 10 + 0x41;
+		}
+
+		string[characters++] = c;
+	}
+
+	string[characters] = '\0'; // NULL terminate strings, but don't increment the count
+
+	return characters;
+}
+
+/* create a new node with id */
+vclock_t *vclock_new_node(uint32_t id)
+{
+	vclock_t *node = (vclock_t *)malloc(sizeof(vclock_t));
+	node->id = id;
+	node->time = 0;
+	node->next = NULL;
+
+	return node;
+}
+
+vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
 	while (clock) {
 		if (id == clock->id) return clock;
@@ -59,6 +103,26 @@ vclock_t *vclock_find_id(uint32_t id, vclock_t *clock)
 	}
 
 	return NULL;
+}
+
+void vclock_insert(vclock_t *clock, vclock_t *node)
+{
+	while (clock->next && clock->next->id < node->id) {
+		clock = clock->next;
+	}
+
+	node->next = clock->next;
+	clock->next = node;
+}
+
+int vclock_lock()
+{
+	return pthread_mutex_lock(&local_clock_lock);
+}
+
+int vclock_unlock()
+{
+	return pthread_mutex_unlock(&local_clock_lock);
 }
 
 /* returns negative if a precedes b, 0 if a is concurrent to b,
@@ -70,7 +134,7 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	vclock_t *b_current;
 
 	while (a_current) {
-		b_current = vclock_find_id(a_current->id, b);
+		b_current = vclock_find_id(b, a_current->id);
 		if (b_current) {
 			int distance = a_current->time - b_current->time;
 			/* if there is a difference we are concurrent if any of the
@@ -95,7 +159,7 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	/* check for membership disagreement backwards as well */
 	b_current = b;
 	while (b_current) {
-		if (!vclock_find_id(b_current->id, a)) {
+		if (!vclock_find_id(a, b_current->id)) {
 			/* the two vector clocks disagree on membership, as membership only
 			 * increases b must not have occurred before a. */
 			if (difference > 0) return 0;
@@ -106,6 +170,73 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	}
 
 	return difference;
+}
+
+/* increment the time entry for id in clock, inserts new
+ * clock entries if the id does not exist */
+void vclock_increment(vclock_t *clock, uint32_t id)
+{
+	vclock_t *node = vclock_find_id(clock, id);
+	if (!node) {
+		node = vclock_new_node(id);
+		vclock_insert(clock, node);
+	}
+
+	++node->time;
+}
+
+/* string representation of vector clock is: base64(id):base64(time):base64(id):... */
+vclock_t *vclock_from_str(const char *str)
+{
+	vclock_t *head = NULL;
+	vclock_t *tail = NULL;
+	char current_36_id[5]   = "";
+	char current_36_time[6] = "";
+	char *current_field = current_36_id;
+	char *other_field   = current_36_time;
+	size_t offset = 0;
+
+	while (*str) {
+		if (*str == ':') {
+			if (current_field == current_36_id) {
+				current_field = current_36_time;
+			} else {
+				current_field = current_36_id;
+				uint16_t id = (uint16_t)strtol(current_36_id, NULL, 36);
+				if (!tail) {
+					head = tail = vclock_new_node(id);
+				} else {
+					tail->next = vclock_new_node(id);
+					tail = tail->next;
+				}
+				tail->time = (uint32_t)strtol(current_36_time, NULL, 36);
+			}
+			offset = 0;
+			++str;
+			continue;
+		}
+
+		current_field[offset++] = *str;
+		++str;
+	}
+
+	return head;
+}
+
+char *vclock_to_str(const vclock_t *clock)
+{
+	char *str = (char *)malloc(10000); // max message size
+	size_t offset = 0;
+
+	while (clock) {
+		offset += base36_encode(clock->id, str + offset);
+		str[offset++] = ':';
+		offset += base36_encode(clock->time, str + offset);
+		str[offset++] = ':';
+	}
+
+	str[offset] = '\0';
+	return str;
 }
 
 /* reliable unicast send.  this fn wraps the unicast with a message
@@ -213,7 +344,13 @@ void multicast(const char *message)
 
 void co_multicast(const char *message)
 {
+	char *clock_string;
+
+	vclock_lock();
+	vclock_increment(local_clock, my_id);
+	clock_string = vclock_to_str(local_clock);
 	
+	vclock_unlock();
 }
 
 /* Fail a member in our list, remove it and tell everyone
@@ -302,7 +439,7 @@ void *r_send_thread_main(void *discard)
                     }
                     else
                     {
-                        if (sendq_array[i]->dest != my_id);
+                        if (sendq_array[i]->dest != my_id)
                             fail_member(sendq_array[i]->dest);
                         free(sendq_array[i]->msg);
                         free(sendq_array[i]);
