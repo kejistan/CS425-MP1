@@ -98,6 +98,13 @@ size_t base36_encode(uint32_t number, char *string)
 
 	string[characters] = '\0'; // NULL terminate strings, but don't increment the count
 
+	// reverse the string
+	for (uint8_t i = 0; i < characters / 2; ++i) {
+		char c = string[characters - i - 1];
+		string[characters - i - 1] = string[i];
+		string[i] = c;
+	}
+
 	return characters;
 }
 
@@ -118,7 +125,7 @@ void causal_queue_pop()
 	causal_queue = causal_queue->next;
 
 	vclock_free(to_remove->timestamp);
-	free(to_remove->message);
+	/* to_remove->message will be removed by the b_deliver handler */
 	free(to_remove);
 }
 
@@ -160,6 +167,8 @@ vclock_t *vclock_new_node(uint32_t id)
 /* find's the node for id, inserts a new empty node if none exists */
 vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
+	assert(clock);
+
 	while (clock->next && clock->next->id < id) {
 		clock = clock->next;
 	}
@@ -250,7 +259,7 @@ void vclock_increment(vclock_t *clock, uint32_t id)
 		vclock_insert(clock, node);
 	}
 
-	++node->time;
+	++(node->time);
 }
 
 /* string representation of vector clock is: base64(id):base64(time):base64(id):... */
@@ -274,6 +283,7 @@ vclock_t *vclock_from_str(const char *str)
 				if (!tail) {
 					head = tail = vclock_new_node(id);
 				} else {
+					assert(tail->next == NULL);
 					tail->next = vclock_new_node(id);
 					tail = tail->next;
 				}
@@ -301,6 +311,7 @@ char *vclock_to_str(const vclock_t *clock)
 		str[offset++] = ':';
 		offset += base36_encode(clock->time, str + offset);
 		str[offset++] = ':';
+		clock = clock->next;
 	}
 
 	str[offset++] = '!'; // End of vclock delimiter
@@ -345,6 +356,7 @@ void r_usend(int dest, const char *message, char msg_type)
     snprintf(item->msg, 15+strlen(message), "%c:%u:%s", msg_type, msg_sequence, message);
 
     /* send message */
+    printf("%s\n", item->msg);
     usend(dest, item->msg);
 
     if (sendq_length == sendq_alloc)
@@ -405,12 +417,6 @@ void r_multicast(const char *message, char msg_type) {
     pthread_mutex_unlock(&member_lock);
 }
 
-void multicast(const char *message)
-{
-    r_multicast(message, 'm');
-}
-
-
 void co_multicast(const char *message)
 {
 	char *clock_string;
@@ -431,11 +437,12 @@ void co_deliver(uint16_t source, char *message)
 
 	pthread_mutex_lock(&causal_queue_lock);
 	add_to_causal_queue(source, timestamp, message);
+	assert(causal_queue);
 	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
 	vclock_t *remote_node = vclock_find_id(causal_queue->timestamp, causal_queue->source);
 	assert(remote_node->time > 0);
-	assert(local_node->time < remote_node->time);
-	if (local_node->time - remote_node->time == 1) {
+	assert(local_node->time <= remote_node->time);
+	if (local_node->time - remote_node->time <= 1) {
 		char *content = message;
 		// advance until reaching the first character of message content
 		while(*(content++) != '!');
@@ -443,6 +450,11 @@ void co_deliver(uint16_t source, char *message)
 		causal_queue_pop();
 	}
 	pthread_mutex_unlock(&causal_queue_lock);
+}
+
+void multicast(const char *message)
+{
+    co_multicast(message);
 }
 
 /* Fail a member in our list, remove it and tell everyone
@@ -572,6 +584,10 @@ void multicast_init(void) {
     /* initialize the local_clock */
     pthread_mutex_init(&local_clock_lock, NULL);
     local_clock = vclock_new_node(my_id);
+
+    /* initialize the causal_queue */
+    pthread_mutex_init(&causal_queue_lock, NULL);
+    causal_queue = NULL;
 
     if (sendq_array == NULL)
     {
