@@ -169,7 +169,7 @@ vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
 	assert(clock);
 
-	while (clock->next && clock->next->id < id) {
+	while (clock->next && clock->next->id <= id) {
 		clock = clock->next;
 	}
 
@@ -438,17 +438,20 @@ void co_deliver(uint16_t source, char *message)
 	pthread_mutex_lock(&causal_queue_lock);
 	add_to_causal_queue(source, timestamp, message);
 	assert(causal_queue);
+	vclock_lock();
 	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
 	vclock_t *remote_node = vclock_find_id(causal_queue->timestamp, causal_queue->source);
 	assert(remote_node->time > 0);
 	assert(local_node->time <= remote_node->time);
-	if (local_node->time - remote_node->time <= 1) {
+	if (remote_node->time - local_node->time <= 1) {
 		char *content = message;
 		// advance until reaching the first character of message content
 		while(*(content++) != '!');
 		deliver(local_node->id, content);
 		causal_queue_pop();
+		local_node->time = remote_node->time;
 	}
+	vclock_unlock();
 	pthread_mutex_unlock(&causal_queue_lock);
 }
 
