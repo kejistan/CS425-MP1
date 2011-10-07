@@ -166,6 +166,33 @@ void r_usend(int dest, const char *message, char msg_type)
     return;
 }
 
+void clear_pings(int source)
+{
+    int i;
+
+    pthread_mutex_lock(&sendq_lock);
+
+    for (i = 0; i < sendq_length; i++)
+    {
+	if (sendq_array[i]->dest == source)
+	{
+	    if (sendq_array[i]->msg_type == 'p')
+	    {
+		free(sendq_array[i]->msg);
+		free(sendq_array[i]);
+		sendq_length--;
+		sendq_array[i] = sendq_array[sendq_length];
+		i--;
+	    }
+	    else
+	    {
+		sendq_array[i]->n_sends = 1;
+	    }
+	}
+    }
+    pthread_mutex_unlock(&sendq_lock);
+}
+
 /* reliable multicast implementation.  uses a reliable unicast
  * to provide a reliable multicast.  */
 void r_multicast(const char *message, char msg_type) {
@@ -338,6 +365,8 @@ void receive(int source, const char *message) {
 
     /* get the message type from the first character */
     mode = message[0];
+
+    clear_pings(source);
     
     switch (mode)
     {
