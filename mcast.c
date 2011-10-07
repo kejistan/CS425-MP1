@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #define RSEND_TIME 50 /* 50 milliseconds between ticks for RSEND */
 #define RSEND_TICKS 10 /* wait 10 ticks of the rsend queue before trying again */
@@ -18,7 +19,7 @@
 /* Structure for a item in the send queue.  We keep
  * a message, the message id, the number of send attempts,
  * the number of ticks since last send and linked list pointers */
-typedef struct 
+typedef struct
 {
     char *msg;
     unsigned int msg_id;
@@ -38,6 +39,15 @@ typedef struct vclock
 	uint16_t id;
 } vclock_t;
 
+/* causal ordered message queue for co_deliver */
+typedef struct message_queue
+{
+	struct message_queue *next;
+	vclock_t *timestamp;
+	char *message;
+	uint16_t source;
+} message_queue_t;
+
 /* Unicast sequence number and message sequence ID number */
 unsigned int msg_sequence = 0;
 
@@ -53,7 +63,14 @@ unsigned int sendq_alloc = 0;
 vclock_t *local_clock = NULL;
 pthread_mutex_t local_clock_lock;
 
+/* Causal ordered message queue for co_deliver, holds recieved (but undelivered
+ * messages in causal order) */
+message_queue_t *causal_queue = NULL;
+pthread_mutex_t causal_queue_lock;
+
 sendq_item **sendq_array;
+
+int vclock_compare(vclock_t *a, vclock_t *b);
 
 /* store number in base 36 in string, return the number of non-null characters
  * written */
@@ -84,6 +101,51 @@ size_t base36_encode(uint32_t number, char *string)
 	return characters;
 }
 
+/* remove clock and all child nodes */
+void vclock_free(vclock_t *clock)
+{
+	if (!clock) return;
+
+	vclock_t *next = clock->next;
+	free(clock);
+	vclock_free(next);
+}
+
+/* remove the head of the causal_queue and advance the head to the next node */
+void causal_queue_pop()
+{
+	message_queue_t *to_remove = causal_queue;
+	causal_queue = causal_queue->next;
+
+	vclock_free(to_remove->timestamp);
+	free(to_remove->message);
+	free(to_remove);
+}
+
+void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
+{
+	message_queue_t *entry = (message_queue_t *)malloc(sizeof(message_queue_t));
+	message_queue_t *current = causal_queue;
+	entry->source = source;
+	entry->timestamp = timestamp;
+	entry->message = message;
+
+	if (!current) {
+		causal_queue = entry;
+		entry->next = NULL;
+		return;
+	}
+
+	/* while not at the end of the queue and the timestamp of current->next is earlier
+	 * than the timestamp advance */
+	while (current->next && vclock_compare(timestamp, current->next->timestamp) < 0) {
+		current = current->next;
+	}
+
+	entry->next = current->next;
+	current->next = entry;
+}
+
 /* create a new node with id */
 vclock_t *vclock_new_node(uint32_t id)
 {
@@ -95,14 +157,20 @@ vclock_t *vclock_new_node(uint32_t id)
 	return node;
 }
 
+/* find's the node for id, inserts a new empty node if none exists */
 vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
-	while (clock) {
-		if (id == clock->id) return clock;
+	while (clock->next && clock->next->id < id) {
 		clock = clock->next;
 	}
 
-	return NULL;
+	if (clock->id == id) return clock;
+
+	vclock_t *node = vclock_new_node(id);
+	node->next = clock->next;
+	clock->next = node;
+
+	return node;
 }
 
 void vclock_insert(vclock_t *clock, vclock_t *node)
@@ -196,7 +264,7 @@ vclock_t *vclock_from_str(const char *str)
 	char *other_field   = current_36_time;
 	size_t offset = 0;
 
-	while (*str) {
+	while (*str || *str == '!') { // ! is end of vclock delmiter
 		if (*str == ':') {
 			if (current_field == current_36_id) {
 				current_field = current_36_time;
@@ -235,6 +303,7 @@ char *vclock_to_str(const vclock_t *clock)
 		str[offset++] = ':';
 	}
 
+	str[offset++] = '!'; // End of vclock delimiter
 	str[offset] = '\0';
 	return str;
 }
@@ -322,8 +391,31 @@ void co_multicast(const char *message)
 	vclock_lock();
 	vclock_increment(local_clock, my_id);
 	clock_string = vclock_to_str(local_clock);
-	
 	vclock_unlock();
+
+	strcat(clock_string, message); // XXX clock_string is assumed to be large enough
+	r_multicast(clock_string, 'm');
+	free(clock_string);
+}
+
+void co_deliver(uint16_t source, char *message)
+{
+	vclock_t *timestamp = vclock_from_str(message);
+
+	pthread_mutex_lock(&causal_queue_lock);
+	add_to_causal_queue(source, timestamp, message);
+	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
+	vclock_t *remote_node = vclock_find_id(causal_queue->timestamp, causal_queue->source);
+	assert(remote_node->time > 0);
+	assert(local_node->time < remote_node->time);
+	if (local_node->time - remote_node->time == 1) {
+		char *content = message;
+		// advance until reaching the first character of message content
+		while(*(content++) != '!');
+		deliver(local_node->id, content);
+		causal_queue_pop();
+	}
+	pthread_mutex_unlock(&causal_queue_lock);
 }
 
 /* Fail a member in our list, remove it and tell everyone
@@ -450,6 +542,10 @@ void multicast_init(void) {
     sendq_array = NULL;
     sendq_array = malloc(sendq_alloc * sizeof(sendq_item*));
 
+    /* initialize the local_clock */
+    pthread_mutex_init(&local_clock_lock, NULL);
+    local_clock = vclock_new_node(my_id);
+
     if (sendq_array == NULL)
     {
         fprintf(stderr, "Could not allocate memory for the sendq array\n");
@@ -503,7 +599,7 @@ void receive(int source, const char *message) {
             usend(source, msg_resp);
 
             /* deliver the message to the next stage */
-            deliver(source, msg_ptr);
+            co_deliver(source, msg_ptr);
             break;
 
         /* message ack */
