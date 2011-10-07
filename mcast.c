@@ -296,7 +296,7 @@ void *r_send_thread_main(void *discard)
 
 void exit_handler(void)
 {
-    r_multicast("", 'f');
+    r_multicast("", 'x');
 
     if (mcast_num_members == 1)
     {
@@ -402,6 +402,10 @@ void receive(int source, const char *message) {
             usend(source, msg_resp);
 
             break;
+
+	case 'x':
+	    fail_member(source);
+	    break;
 
         default:
             break;
