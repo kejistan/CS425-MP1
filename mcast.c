@@ -77,14 +77,17 @@ int vclock_compare(vclock_t *a, vclock_t *b);
 size_t base36_encode(uint32_t number, char *string)
 {
 	size_t characters = 0;
+	uint8_t i;
+	uint8_t digit;
+	char c;
 
 	if (number == 0) {
 		string[characters++] = '0';
 	}
 
 	while (number) {
-		uint16_t digit = number % 36;
-		char c = '\0';
+		digit = number % 36;
+		c = '\0';
 		number = number / 36;
 
 		if (digit < 10) {
@@ -99,7 +102,7 @@ size_t base36_encode(uint32_t number, char *string)
 	string[characters] = '\0'; // NULL terminate strings, but don't increment the count
 
 	// reverse the string
-	for (uint8_t i = 0; i < characters / 2; ++i) {
+	for (i = 0; i < characters / 2; ++i) {
 		char c = string[characters - i - 1];
 		string[characters - i - 1] = string[i];
 		string[i] = c;
