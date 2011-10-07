@@ -84,7 +84,18 @@ size_t base36_encode(uint32_t number, char *string)
 	return characters;
 }
 
-vclock_t *vclock_find_id(uint32_t id, vclock_t *clock)
+/* create a new node with id */
+vclock_t *vclock_new_node(uint32_t id)
+{
+	vclock_t *node = (vclock_t *)malloc(sizeof(vclock_t));
+	node->id = id;
+	node->time = 0;
+	node->next = NULL;
+
+	return node;
+}
+
+vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
 	while (clock) {
 		if (id == clock->id) return clock;
@@ -92,6 +103,16 @@ vclock_t *vclock_find_id(uint32_t id, vclock_t *clock)
 	}
 
 	return NULL;
+}
+
+void vclock_insert(vclock_t *clock, vclock_t *node)
+{
+	while (clock->next && clock->next->id < node->id) {
+		clock = clock->next;
+	}
+
+	node->next = clock->next;
+	clock->next = node;
 }
 
 int vclock_lock()
@@ -113,7 +134,7 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	vclock_t *b_current;
 
 	while (a_current) {
-		b_current = vclock_find_id(a_current->id, b);
+		b_current = vclock_find_id(b, a_current->id);
 		if (b_current) {
 			int distance = a_current->time - b_current->time;
 			/* if there is a difference we are concurrent if any of the
@@ -138,7 +159,7 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	/* check for membership disagreement backwards as well */
 	b_current = b;
 	while (b_current) {
-		if (!vclock_find_id(b_current->id, a)) {
+		if (!vclock_find_id(a, b_current->id)) {
 			/* the two vector clocks disagree on membership, as membership only
 			 * increases b must not have occurred before a. */
 			if (difference > 0) return 0;
@@ -151,22 +172,11 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	return difference;
 }
 
-/* create a new node with id */
-vclock_t *clock_new_node(uint32_t id)
-{
-	vclock_t *node = (vclock_t *)malloc(sizeof(vclock_t));
-	node->id = id;
-	node->time = 0;
-	node->next = NULL;
-
-	return node;
-}
-
 /* increment the time entry for id in clock, inserts new
  * clock entries if the id does not exist */
 void vclock_increment(vclock_t *clock, uint32_t id)
 {
-	vclock_t *node = vlock_find_id(id);
+	vclock_t *node = vclock_find_id(clock, id);
 	if (!node) {
 		node = vclock_new_node(id);
 		vclock_insert(clock, node);
@@ -192,7 +202,7 @@ vclock_t *vclock_from_str(const char *str)
 				current_field = current_36_time;
 			} else {
 				current_field = current_36_id;
-				uint16_t id = (uin16_t)strtol(current_36_id, NULL, 36);
+				uint16_t id = (uint16_t)strtol(current_36_id, NULL, 36);
 				if (!tail) {
 					head = tail = vclock_new_node(id);
 				} else {
@@ -312,7 +322,7 @@ void co_multicast(const char *message)
 	vclock_lock();
 	vclock_increment(local_clock, my_id);
 	clock_string = vclock_to_str(local_clock);
-	/* more to come */
+	
 	vclock_unlock();
 }
 
@@ -402,7 +412,7 @@ void *r_send_thread_main(void *discard)
                     }
                     else
                     {
-                        if (sendq_array[i]->dest != my_id);
+                        if (sendq_array[i]->dest != my_id)
                             fail_member(sendq_array[i]->dest);
                         free(sendq_array[i]->msg);
                         free(sendq_array[i]);
