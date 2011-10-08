@@ -123,6 +123,19 @@ size_t base36_encode(uint32_t number, char *string)
 	return characters;
 }
 
+/* returns 1 if id is a member of the mcast group, otherwise returns 0 */
+int process_is_alive(uint16_t id)
+{
+	size_t i;
+
+	assert(mcast_num_members >= 0);
+	for (i = 0; i < (size_t)mcast_num_members; ++i) {
+		if (mcast_members[i] == id) return 1;
+	}
+
+	return 0;
+}
+
 /* remove clock and all child nodes */
 void vclock_free(vclock_t *clock)
 {
@@ -521,6 +534,10 @@ void co_deliver(uint16_t source, char *message)
 			deliver(causal_queue->source, causal_queue->message);
 			causal_queue_pop();
 			local_node->time = remote_node->time;
+		} else if (!process_is_alive(causal_queue->source)) {
+			/* this message is waiting on a message from a failed process, we cannot
+			 * guarantee that we'll ever recieve it so drop the message */
+			causal_queue_pop();
 		} else {
 			vclock_unlock();
 			break;
