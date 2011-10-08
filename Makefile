@@ -2,9 +2,10 @@ all: mp1
 
 SOURCEFILES = unicast.c mcast.c chat.c
 HEADERS = mp1.h
+CC = gcc
 
 mp1: $(SOURCEFILES) $(HEADERS)
-	gcc -g -pthread -o $@ $(SOURCEFILES)
+	$(CC) -g -pthread -o $@ $(SOURCEFILES)
 
 clean:	restart
 	-rm -f mp1 *.o
