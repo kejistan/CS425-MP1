@@ -67,7 +67,7 @@ typedef struct msg_record
 } msg_record_t;
 
 /* duplicate protection */
-unsigned int recbuf_len = 0;
+unsigned int recbuf_length = 0;
 unsigned int recbuf_alloc = 0;
 msg_record_t *recbuf_array;
 pthread_mutex_t recbuf_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -478,6 +478,7 @@ void vclock_merge(vclock_t *base_clock, vclock_t *import_clock)
 
 	if (found_flag == 0)
 	{
+	    // XXX broken.  
 	    base_i->next = vclock_new_node(import_clock->id);
 	    base_i = base_i->next;
 	    base_i->time = import_clock->time;
@@ -492,14 +493,14 @@ void co_deliver(uint16_t source, char *message)
 	vclock_t *timestamp = vclock_from_str(message);
 	message_queue_t *new_queue_item;
 
-	new_queue_item = calloc(1, sizeof(message_queue_t));
-	assert(new_queue_item);
+//	new_queue_item = calloc(1, sizeof(message_queue_t));
+//	assert(new_queue_item);
 
-	new_queue_item->timestamp = timestamp;
+/*	new_queue_item->timestamp = timestamp;
 	new_queue_item->source = source;
 	new_queue_item->message = malloc(strlen(message));
 	strcpy(
-
+*/
 	pthread_mutex_lock(&causal_queue_lock);
 	vclock_lock();
 
@@ -741,7 +742,7 @@ void receive(int source, const char *message) {
 		if (recbuf_length == recbuf_alloc)
 		{
 		    recbuf_alloc *= 2;
-		    recbuf_array = realloc(recbuf_array, recbuf_alloc * sizeof(msg_rec_t));
+		    recbuf_array = realloc(recbuf_array, recbuf_alloc * sizeof(msg_record_t));
 		    if (recbuf_array == NULL) 
 		    {
 			perror("recbuf realloc failed");
