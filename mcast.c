@@ -456,50 +456,6 @@ void co_multicast(const char *message)
 	free(clock_string);
 }
 
-void vclock_merge(vclock_t *base_clock, vclock_t *import_clock)
-{
-    vclock_t *base_i;
-    char found_flag;
-
-    assert(base_clock);
-
-    if (import_clock == NULL)
-	return;
-
-    while (import_clock != NULL)
-    {
-	found_flag = 0;
-	
-	base_i = base_clock;
-
-	while (base_i != NULL)
-	{
-	    if (base_i->id == import_clock->id)
-	    {
-		found_flag = 1;
-		if (base_i->time < import_clock->time)
-		    base_i->time = import_clock->time;
-		break;
-	    }
-	    base_i = base_i->next;
-	}
-
-	base_i = base_clock;
-	while (base_i->next != NULL)
-	    base_i = base_i->next;
-
-	if (found_flag == 0)
-	{
-	    // XXX broken.  
-	    base_i->next = vclock_new_node(import_clock->id);
-	    base_i = base_i->next;
-	    base_i->time = import_clock->time;
-	}
-
-	import_clock = import_clock->next;
-    }
-}
-
 void co_deliver(uint16_t source, char *message)
 {
 	vclock_t *timestamp = vclock_from_str(message);
@@ -686,6 +642,8 @@ void multicast_init(void) {
     }
 
     atexit(exit_handler);
+
+    r_multicast("", 's');
 }
 
 /* receive callback */
@@ -695,6 +653,7 @@ void receive(int source, const char *message) {
     char *msg_ptr = (char *)message;
     char msg_resp[512];
     unsigned int msg_id, i;
+    vclock_t *clock_i;
 
     /* get the message type from the first character */
     mode = message[0];
@@ -788,6 +747,41 @@ void receive(int source, const char *message) {
             usend(source, msg_resp);
 
             break;
+	
+	case 's':
+	    msg_ptr += 2;
+
+	    msg_id = atoi(msg_ptr);
+
+	    snprintf(msg_resp, 511, "a:%u", msg_id);
+	    usend(source, msg_resp);
+
+	    vclock_lock();
+	    clock_i = vclock_find_id(local_clock, source);
+	    clock_i->time = 0;
+	    clock_i = vclock_find_id(local_clock, my_id);
+	    snprintf(msg_resp, 511, "%u", clock_i->time);
+	    r_usend(source, msg_resp, 'y');
+	    vclock_unlock();
+
+	    break;
+
+	case 'y':
+	    msg_ptr += 2;
+	    msg_id = atoi(msg_ptr);
+	    snprintf(msg_resp, 511, "a:%u", msg_id);
+	    usend(source, msg_resp);
+
+	    while (*(msg_ptr++) != ':');
+
+	    vclock_lock();
+	    clock_i = vclock_find_id(local_clock, source);
+	    clock_i->time = atoi(msg_ptr);
+	    vclock_unlock();
+	    break;
+
+	    
+
 
 	case 'x':
 	    fail_member(source);
