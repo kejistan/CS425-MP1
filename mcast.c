@@ -241,25 +241,21 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	vclock_t *a_current = a;
 	vclock_t *b_current;
 
+	assert(a);
+	assert(b);
+
 	while (a_current) {
 		b_current = vclock_find_id(b, a_current->id);
-		if (b_current) {
-			int distance = a_current->time - b_current->time;
-			/* if there is a difference we are concurrent if any of the
-			 * timestamps does not agree with that difference */
-			if (difference < 0 && distance > 0) {
-				return 0;
-			}
-			if (difference > 0 && distance < 0) {
-				return 0;
-			}
-			difference += distance;
-		} else {
-			/* the two vector clocks disagree on membership, as membership only
-			 * increases a must not have ocurred before b. */
-			if (difference < 0) return 0;
-			difference += a_current->time;
+		int distance = a_current->time - b_current->time;
+		/* if there is a difference we are concurrent if any of the
+		 * timestamps does not agree with that difference */
+		if (difference < 0 && distance > 0) {
+			return 0;
 		}
+		if (difference > 0 && distance < 0) {
+			return 0;
+		}
+		difference += distance;
 
 		a_current = a_current->next;
 	}
@@ -267,11 +263,11 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	/* check for membership disagreement backwards as well */
 	b_current = b;
 	while (b_current) {
-		if (!vclock_find_id(a, b_current->id)) {
-			/* the two vector clocks disagree on membership, as membership only
-			 * increases b must not have occurred before a. */
-			if (difference > 0) return 0;
-			difference -= b_current->time;
+		a_current = vclock_find_id(a, b_current->id);
+		int distance = a_current->time - b_current->time;
+		if ((difference < 0 && distance > 0)
+		    || (difference > 0 && distance < 0)) {
+			return 0;
 		}
 
 		b_current = b_current->next;
