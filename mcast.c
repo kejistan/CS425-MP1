@@ -171,6 +171,7 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 	entry->message   = malloc(strlen(message) + 1);
 	strcpy(entry->message, message);
 
+#ifdef DEBUG
 	printf("queued message from id: %d with message: %s with timestamp: [", source,
 	       entry->message);
 	while (timestamp) {
@@ -178,6 +179,7 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 		timestamp = timestamp->next;
 	}
 	printf("]\n");
+#endif
 
 	if (!current) {
 		causal_queue = entry;
@@ -394,7 +396,9 @@ void r_usend(int dest, const char *message, char msg_type)
     snprintf(item->msg, 15+strlen(message), "%c:%u:%s", msg_type, msg_sequence, message);
 
     /* send message */
+#ifdef DEBUG
     printf("%s\n", item->msg);
+#endif
     usend(dest, item->msg);
 
     if (sendq_length == sendq_alloc)
@@ -525,7 +529,9 @@ int fail_member(int member)
         {
             found_members++;
             mcast_members[i] = mcast_members[mcast_num_members - found_members];
+#ifdef DEBUG
             printf("failing member: %d\n", member);
+#endif
         }
     }
     mcast_num_members -= found_members;
