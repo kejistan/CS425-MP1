@@ -140,7 +140,7 @@ void causal_queue_pop()
 	causal_queue = causal_queue->next;
 
 	vclock_free(to_remove->timestamp);
-	/* to_remove->message will be removed by the b_deliver handler */
+	free(to_remove->message);
 	free(to_remove);
 }
 
@@ -519,10 +519,7 @@ void co_deliver(uint16_t source, char *message)
 	assert(remote_node->time > 0);
 	assert(local_node->time <= remote_node->time);
 	if (remote_node->time - local_node->time <= 1) {
-		char *content = message;
-		// advance until reaching the first character of message content
-		while(*(content++) != '!');
-		deliver(local_node->id, content);
+		deliver(causal_queue->source, causal_queue->message);
 		causal_queue_pop();
 		local_node->time = remote_node->time;
 	}
