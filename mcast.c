@@ -60,10 +60,16 @@ unsigned int sendq_length = 0;
 unsigned int sendq_alloc = 0;
 sendq_item **sendq_array;
 
+typedef struct msg_record
+{
+    int source;
+    unsigned int msg_id;
+} msg_record_t;
+
 /* duplicate protection */
 unsigned int recbuf_len = 0;
 unsigned int recbuf_alloc = 0;
-unsigned int *recbuf_array;
+msg_record_t *recbuf_array;
 pthread_mutex_t recbuf_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Vector clock, holds sequence information for co_multicast messages */
@@ -442,12 +448,69 @@ void co_multicast(const char *message)
 	free(clock_string);
 }
 
+void vclock_merge(vclock_t *base_clock, vclock_t *import_clock)
+{
+    vclock_t *base_i;
+    char found_flag;
+
+    assert(base_clock);
+
+    if (import_clock == NULL)
+	return;
+
+    while (import_clock != NULL)
+    {
+	found_flag = 0;
+	
+	base_i = base_clock;
+
+	while (base_i != NULL)
+	{
+	    if (base_i->id == import_clock->id)
+	    {
+		found_flag = 1;
+		if (base_i->time < import_clock->time)
+		    base_i->time = import_clock->time;
+		break;
+	    }
+	    base_i = base_i->next;
+	}
+
+	if (found_flag == 0)
+	{
+	    base_i->next = vclock_new_node(import_clock->id);
+	    base_i = base_i->next;
+	    base_i->time = import_clock->time;
+	}
+
+	import_clock = import_clock->next;
+    }
+}
+
 void co_deliver(uint16_t source, char *message)
 {
 	vclock_t *timestamp = vclock_from_str(message);
+	message_queue_t *new_queue_item;
+
+	new_queue_item = calloc(1, sizeof(message_queue_t));
+	assert(new_queue_item);
+
+	new_queue_item->timestamp = timestamp;
+	new_queue_item->source = source;
+	new_queue_item->message = malloc(strlen(message));
+	strcpy(
 
 	pthread_mutex_lock(&causal_queue_lock);
-	add_to_causal_queue(source, timestamp, message);
+	vclock_lock();
+
+	vclock_increment(local_clock, my_id);
+	vclock_merge(local_clock, timestamp);
+
+
+
+
+
+	/*add_to_causal_queue(source, timestamp, message);
 	assert(causal_queue);
 	vclock_lock();
 	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
@@ -461,7 +524,7 @@ void co_deliver(uint16_t source, char *message)
 		deliver(local_node->id, content);
 		causal_queue_pop();
 		local_node->time = remote_node->time;
-	}
+	} */
 	vclock_unlock();
 	pthread_mutex_unlock(&causal_queue_lock);
 }
@@ -665,7 +728,7 @@ void receive(int source, const char *message) {
 
 	    for (i = 0; i < recbuf_length; i++)
 	    {
-		if (recbuf_array[i] == msg_id)
+		if (recbuf_array[i].msg_id == msg_id && recbuf_array[i].source == source)
 		    break;
 	    }
 
@@ -678,14 +741,15 @@ void receive(int source, const char *message) {
 		if (recbuf_length == recbuf_alloc)
 		{
 		    recbuf_alloc *= 2;
-		    recbuf_array = realloc(recbuf_array, recbuf_alloc * sizeof(int));
+		    recbuf_array = realloc(recbuf_array, recbuf_alloc * sizeof(msg_rec_t));
 		    if (recbuf_array == NULL) 
 		    {
 			perror("recbuf realloc failed");
 			exit(1);
 		    }
 		}
-		recbuf_array[recbuf_length++] = msg_id;
+		recbuf_array[recbuf_length].msg_id = msg_id;
+		recbuf_array[recbuf_length].source = source;
 		pthread_mutex_unlock(&recbuf_lock);
 	    }
             break;
@@ -695,7 +759,7 @@ void receive(int source, const char *message) {
             /* skip past type and delimiter */
             msg_ptr += 2;
 
-            /* get the message ID */
+	    /* get the message ID */
             msg_id = atoi(msg_ptr);
 
             pthread_mutex_lock(&sendq_lock);
