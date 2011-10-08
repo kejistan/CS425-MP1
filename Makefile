@@ -1,7 +1,7 @@
 all: mp1
 
-CC := clang
-CFLAGS := -Wextra -Wall -g -DDEBUG
+CC := gcc
+CFLAGS := -Wextra -Wall -g
 
 SOURCEFILES = unicast.c mcast.c chat.c
 HEADERS = mp1.h

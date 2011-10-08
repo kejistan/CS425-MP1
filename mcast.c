@@ -345,6 +345,7 @@ vclock_t *vclock_from_str(const char *str)
 	return head;
 }
 
+/* write a new string for a vclock */
 char *vclock_to_str(const vclock_t *clock)
 {
 	char *str = (char *)malloc(10000); // max message size
@@ -428,6 +429,8 @@ void r_usend(int dest, const char *message, char msg_type)
     return;
 }
 
+/* This function will remove pending pings from the send queue and will 
+ * force more retries for the other items in the sendq */
 void clear_pings(int source)
 {
     int i;
@@ -649,6 +652,7 @@ void *r_send_thread_main(void *discard)
 
 }
 
+/* exit handler for cleanup */
 void exit_handler(void)
 {
     r_multicast("", 'x');
@@ -791,6 +795,7 @@ void receive(int source, const char *message) {
             pthread_mutex_unlock(&sendq_lock);
             break;
 
+	/* ping message.  Send an ack back */
         case 'p':
             msg_ptr += 2;
 
@@ -801,6 +806,7 @@ void receive(int source, const char *message) {
 
             break;
 	
+	/* sync message.  send what our clock is, zero their clock */
 	case 's':
 	    msg_ptr += 2;
 
@@ -819,6 +825,7 @@ void receive(int source, const char *message) {
 
 	    break;
 
+	/* sync reply, add their clock onto our clock queue */
 	case 'y':
 	    msg_ptr += 2;
 	    msg_id = atoi(msg_ptr);
@@ -833,9 +840,7 @@ void receive(int source, const char *message) {
 	    vclock_unlock();
 	    break;
 
-	    
-
-
+	/* member exited, fail them from the list */
 	case 'x':
 	    fail_member(source);
 	    break;
