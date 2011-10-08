@@ -52,12 +52,19 @@ typedef struct message_queue
 unsigned int msg_sequence = 0;
 
 /* thread for the sendq handler and the lock around the sendq */
-pthread_mutex_t sendq_lock;
+pthread_mutex_t sendq_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_t r_send_thread;
 
 /* unicast sendq array */
 unsigned int sendq_length = 0;
 unsigned int sendq_alloc = 0;
+sendq_item **sendq_array;
+
+/* duplicate protection */
+unsigned int recbuf_len = 0;
+unsigned int recbuf_alloc = 0;
+unsigned int *recbuf_array;
+pthread_mutex_t recbuf_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Vector clock, holds sequence information for co_multicast messages */
 vclock_t *local_clock = NULL;
@@ -68,7 +75,6 @@ pthread_mutex_t local_clock_lock;
 message_queue_t *causal_queue = NULL;
 pthread_mutex_t causal_queue_lock;
 
-sendq_item **sendq_array;
 
 int vclock_compare(vclock_t *a, vclock_t *b);
 
@@ -139,6 +145,8 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 	entry->source = source;
 	entry->timestamp = timestamp;
 	entry->message = message;
+
+	printf("adding source: %d with time: %d and id: %d\n", source, timestamp->time, timestamp->id);
 
 	if (!current) {
 		causal_queue = entry;
@@ -587,6 +595,12 @@ void multicast_init(void) {
     sendq_array = NULL;
     sendq_array = malloc(sendq_alloc * sizeof(sendq_item*));
 
+    /* malloc an array for a list of message IDs that have been recv'd
+     * so we don't get duplicates */
+    recbuf_alloc = 1000;
+    recbuf_array = NULL;
+    recbuf_array = malloc(recbuf_alloc * sizeof(int));
+
     /* initialize the local_clock */
     pthread_mutex_init(&local_clock_lock, NULL);
     local_clock = vclock_new_node(my_id);
@@ -649,8 +663,31 @@ void receive(int source, const char *message) {
             snprintf(msg_resp, 511, "a:%u", msg_id);
             usend(source, msg_resp);
 
-            /* deliver the message to the next stage */
-            co_deliver(source, msg_ptr);
+	    for (i = 0; i < recbuf_length; i++)
+	    {
+		if (recbuf_array[i] == msg_id)
+		    break;
+	    }
+
+	    if (i == recbuf_length)
+	    {
+		/* deliver the message to the next stage */
+                co_deliver(source, msg_ptr);
+
+		pthread_mutex_lock(&recbuf_lock);
+		if (recbuf_length == recbuf_alloc)
+		{
+		    recbuf_alloc *= 2;
+		    recbuf_array = realloc(recbuf_array, recbuf_alloc * sizeof(int));
+		    if (recbuf_array == NULL) 
+		    {
+			perror("recbuf realloc failed");
+			exit(1);
+		    }
+		}
+		recbuf_array[recbuf_length++] = msg_id;
+		pthread_mutex_unlock(&recbuf_lock);
+	    }
             break;
 
         /* message ack */
