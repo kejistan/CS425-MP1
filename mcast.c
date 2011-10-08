@@ -164,12 +164,14 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 	message_queue_t *entry   = (message_queue_t *)malloc(sizeof(message_queue_t));
 	message_queue_t *current = causal_queue;
 
+	assert(timestamp);
+	assert(message);
+
 	while (*(message++) != '!'); // advance message to start of message content
 
 	entry->source    = source;
 	entry->timestamp = timestamp;
-	entry->message   = malloc(strlen(message) + 1);
-	strcpy(entry->message, message);
+	entry->message   = strdup(message);
 
 	printf("queued message from id: %d with message: %s with timestamp: [", source,
 	       entry->message);
@@ -187,7 +189,7 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 
 	/* while not at the end of the queue and the timestamp of current->next is earlier
 	 * than the timestamp advance */
-	while (current->next && vclock_compare(timestamp, current->next->timestamp) < 0) {
+	while (current->next && vclock_compare(current->next->timestamp, entry->timestamp) < 0) {
 		current = current->next;
 	}
 
@@ -278,11 +280,16 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	while (b_current) {
 		a_current = vclock_find_id(a, b_current->id);
 		int distance = a_current->time - b_current->time;
-		if ((difference < 0 && distance > 0)
-		    || (difference > 0 && distance < 0)) {
+		/* if there is a difference we are concurrent if any of the
+		 * timestamps does not agree with that difference */
+		if (difference < 0 && distance > 0) {
+			return 0;
+		}
+		if (difference > 0 && distance < 0) {
 			return 0;
 		}
 
+		difference += distance;
 		b_current = b_current->next;
 	}
 
@@ -446,12 +453,34 @@ void clear_pings(int source)
 /* reliable multicast implementation.  uses a reliable unicast
  * to provide a reliable multicast.  */
 void r_multicast(const char *message, char msg_type) {
+#ifdef DEBUG
+	static char *cached_message = NULL;
+	static char cached_msg_type = '\0';
+#endif
     int i;
-    
+
     pthread_mutex_lock(&member_lock);
-    for (i = 0; i < mcast_num_members; i++) {
-        r_usend(mcast_members[i], message, msg_type);
+
+#ifdef DEBUG
+    if (cached_message) {
+#endif
+	    /* send the current message */
+	    for (i = 0; i < mcast_num_members; i++) {
+		    r_usend(mcast_members[i], message, msg_type);
+	    }
+#ifdef DEBUG
+	    /* send the previous message */
+	    for (i = 0; i < mcast_num_members; i++) {
+		    r_usend(mcast_members[i], cached_message, cached_msg_type);
+	    }
+	    free(cached_message);
+	    cached_message = NULL;
+    } else {
+	    cached_message = strdup(message);
+	    cached_msg_type = msg_type;
     }
+#endif
+
     pthread_mutex_unlock(&member_lock);
 }
 
