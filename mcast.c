@@ -512,7 +512,7 @@ void co_deliver(uint16_t source, char *message)
 	vclock_lock();
 
 //	vclock_increment(local_clock, my_id);
-	vclock_merge(local_clock, timestamp);
+//	vclock_merge(local_clock, timestamp);
 
 
 
