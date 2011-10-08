@@ -9,12 +9,15 @@
 \maketitle
 
 \section{Introduction}
-The goal of this MP was to extend the skeletal chat client to include causal ordering, reliable multicast and failure detection.  
+The goal of this MP was to extend the skeletal chat client to include causal ordering, reliable multicast and failure detection.
 
 \subsection{Causal Ordering}
+Our multicast implementation maintains causal ordering through the use of vector clocks and based on the simple causal ordering algorithm described in Figure 12.16 of Distributed Systems Concepts and Design which was in turn based on an algorithm developed by Birman et al. [1991]. Our algorithm has the additional requirement that it drop ``stale'' messages based on vector clock comparison, this is used to handle new processes joining the group by allowing them to set a valid point to enter the conversation.
+
+Following the the Algorithm described in figure 12.16 we hold incoming messages in a queue until the recieving process' vector clock entry for the source is at most 1 smaller than the vector timestamp of the message. At that point we deliver the message (or drop the message if it is older than the process' vector clock). To support failure resolution we also drop messages from failed processes that are waiting on a previous message.
 
 \subsection{Reliable Multicast}
-We created a reliable multicast by wrapping the underlying unicast methods with a reliability layer.  The basic operation of the reliabilty layer is for each unicast message sent out we have the recipient reply with an acknowledgement, and if the sender does not get the acknowledgement it will resend the message.  
+We created a reliable multicast by wrapping the underlying unicast methods with a reliability layer.  The basic operation of the reliabilty layer is for each unicast message sent out we have the recipient reply with an acknowledgement, and if the sender does not get the acknowledgement it will resend the message.
 
 Upon issuing the unicast send request the message will be initally sent and copied into a queue.  A second thread monitors the queue and will watch to see when a message is ready for retransmission.  If it hasn't been removed by that point it will be retransmitted.  If the number of retransmissions hits a set point and it has not been acknowledged by a member, we consider that process as failed and remove it from the list.
 
