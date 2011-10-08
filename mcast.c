@@ -511,17 +511,26 @@ void co_deliver(uint16_t source, char *message)
 	pthread_mutex_lock(&causal_queue_lock);
 	add_to_causal_queue(source, timestamp, message);
 	assert(causal_queue);
-	vclock_lock();
-	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
-	vclock_t *remote_node = vclock_find_id(causal_queue->timestamp, causal_queue->source);
-	assert(remote_node->time > 0);
-	assert(local_node->time <= remote_node->time);
-	if (remote_node->time - local_node->time <= 1) {
-		deliver(causal_queue->source, causal_queue->message);
-		causal_queue_pop();
-		local_node->time = remote_node->time;
+	while (causal_queue) {
+		vclock_lock();
+		vclock_t *local_node  = vclock_find_id(local_clock,
+		                                       causal_queue->source);
+		vclock_t *remote_node = vclock_find_id(causal_queue->timestamp,
+		                                       causal_queue->source);
+		assert(remote_node->time > 0);
+		if (local_node->time > remote_node->time) {
+			/* duplicate message */
+			causal_queue_pop();
+		} else if (remote_node->time - local_node->time <= 1) {
+			deliver(causal_queue->source, causal_queue->message);
+			causal_queue_pop();
+			local_node->time = remote_node->time;
+		} else {
+			vclock_unlock();
+			break;
+		}
+		vclock_unlock();
 	}
-	vclock_unlock();
 	pthread_mutex_unlock(&causal_queue_lock);
 }
 
