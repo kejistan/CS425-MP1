@@ -189,7 +189,7 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 		return;
 	}
 
-	if (vclock_compare(causal_queue->timestamp, entry->timestamp) < 0) {
+	if (vclock_compare(causal_queue->timestamp, entry->timestamp) >= 0) {
 		entry->next = causal_queue;
 		causal_queue = entry;
 		return;
@@ -403,7 +403,8 @@ void r_usend(int dest, const char *message, char msg_type)
 #ifdef DEBUG
     printf("%s\n", item->msg);
 #endif
-    usend(dest, item->msg);
+    if (dest != my_id)
+        usend(dest, item->msg);
 
     if (sendq_length == sendq_alloc)
     {
@@ -420,6 +421,9 @@ void r_usend(int dest, const char *message, char msg_type)
     sendq_array[sendq_length++] = item;
 
     pthread_mutex_unlock(&sendq_lock);
+
+    if (dest == my_id)
+        receive(dest, message);
 
     return;
 }
