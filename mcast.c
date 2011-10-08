@@ -144,15 +144,27 @@ void causal_queue_pop()
 	free(to_remove);
 }
 
+/* inserts a new message_queue entry at the correct sorted position in the queue and
+ * copies the message content from message into the message_queue_t.message field */
 void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 {
-	message_queue_t *entry = (message_queue_t *)malloc(sizeof(message_queue_t));
+	message_queue_t *entry   = (message_queue_t *)malloc(sizeof(message_queue_t));
 	message_queue_t *current = causal_queue;
-	entry->source = source;
-	entry->timestamp = timestamp;
-	entry->message = message;
 
-	printf("adding source: %d with time: %d and id: %d\n", source, timestamp->time, timestamp->id);
+	while (*(message++) != '!'); // advance message to start of message content
+
+	entry->source    = source;
+	entry->timestamp = timestamp;
+	entry->message   = malloc(strlen(message) + 1);
+	strcpy(entry->message, message);
+
+	printf("queued message from id: %d with message: %s with timestamp: [", source,
+	       entry->message);
+	while (timestamp) {
+		printf(" %d: %d ", timestamp->id, timestamp->time);
+		timestamp = timestamp->next;
+	}
+	printf("]\n");
 
 	if (!current) {
 		causal_queue = entry;
@@ -201,9 +213,13 @@ vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 
 void vclock_insert(vclock_t *clock, vclock_t *node)
 {
-	while (clock->next && clock->next->id < node->id) {
+	assert(clock);
+
+	while (clock->next && clock->next->id <= node->id) {
 		clock = clock->next;
 	}
+
+	assert(clock->id != node->id);
 
 	node->next = clock->next;
 	clock->next = node;
@@ -268,18 +284,13 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 
 /* increment the time entry for id in clock, inserts new
  * clock entries if the id does not exist */
-void vclock_increment(vclock_t *clock, uint32_t id)
+void vclock_increment(vclock_t *clock, uint16_t id)
 {
-    vclock_t *clock_i = clock;
+	assert(clock);
 
-    while (clock_i != NULL)
-    {
-	if (clock_i->id == id)
-	{
-	    clock_i->time++;
-	}
-	clock_i = clock_i->next;
-    }
+	vclock_t *node = vclock_find_id(clock, id);
+
+	++(node->time);
 }
 
 /* string representation of vector clock is: base64(id):base64(time):base64(id):... */
@@ -498,27 +509,9 @@ void vclock_merge(vclock_t *base_clock, vclock_t *import_clock)
 void co_deliver(uint16_t source, char *message)
 {
 	vclock_t *timestamp = vclock_from_str(message);
-	message_queue_t *new_queue_item;
 
-//	new_queue_item = calloc(1, sizeof(message_queue_t));
-//	assert(new_queue_item);
-
-/*	new_queue_item->timestamp = timestamp;
-	new_queue_item->source = source;
-	new_queue_item->message = malloc(strlen(message));
-	strcpy(
-*/
 	pthread_mutex_lock(&causal_queue_lock);
-	vclock_lock();
-
-//	vclock_increment(local_clock, my_id);
-//	vclock_merge(local_clock, timestamp);
-
-
-
-
-
-	/*add_to_causal_queue(source, timestamp, message);
+	add_to_causal_queue(source, timestamp, message);
 	assert(causal_queue);
 	vclock_lock();
 	vclock_t *local_node = vclock_find_id(local_clock, causal_queue->source);
@@ -532,7 +525,7 @@ void co_deliver(uint16_t source, char *message)
 		deliver(local_node->id, content);
 		causal_queue_pop();
 		local_node->time = remote_node->time;
-	} */
+	}
 	vclock_unlock();
 	pthread_mutex_unlock(&causal_queue_lock);
 }
