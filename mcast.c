@@ -198,9 +198,11 @@ vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
 	assert(clock);
 
+	if (clock->id == id) return clock;
+
 	while (clock->next) {
-		if (clock->id == id) return clock;
 		clock = clock->next;
+		if (clock->id == id) return clock;
 	}
 
 	clock->next = vclock_new_node(id);
