@@ -189,6 +189,12 @@ void add_to_causal_queue(uint16_t source, vclock_t *timestamp, char *message)
 		return;
 	}
 
+	if (vclock_compare(causal_queue->timestamp, entry->timestamp) < 0) {
+		entry->next = causal_queue;
+		causal_queue = entry;
+		return;
+	}
+
 	/* while not at the end of the queue and the timestamp of current->next is earlier
 	 * than the timestamp advance */
 	while (current->next && vclock_compare(current->next->timestamp, entry->timestamp) < 0) {
@@ -264,16 +270,12 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	while (a_current) {
 		b_current = vclock_find_id(b, a_current->id);
 		int distance = a_current->time - b_current->time;
-		/* if there is a difference we are concurrent if any of the
-		 * timestamps does not agree with that difference */
-		if (difference < 0 && distance > 0) {
+		if (difference * distance < 0) {
+			/* difference disagrees with distance */
 			return 0;
 		}
-		if (difference > 0 && distance < 0) {
-			return 0;
-		}
-		difference += distance;
 
+		difference += distance;
 		a_current = a_current->next;
 	}
 
@@ -282,12 +284,7 @@ int vclock_compare(vclock_t *a, vclock_t *b)
 	while (b_current) {
 		a_current = vclock_find_id(a, b_current->id);
 		int distance = a_current->time - b_current->time;
-		/* if there is a difference we are concurrent if any of the
-		 * timestamps does not agree with that difference */
-		if (difference < 0 && distance > 0) {
-			return 0;
-		}
-		if (difference > 0 && distance < 0) {
+		if (difference * distance < 0) {
 			return 0;
 		}
 
