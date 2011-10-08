@@ -1,11 +1,13 @@
 all: mp1
 
+CC := clang
+CFLAGS := -Wextra -Wall -g
+
 SOURCEFILES = unicast.c mcast.c chat.c
 HEADERS = mp1.h
-CC = gcc
 
 mp1: $(SOURCEFILES) $(HEADERS)
-	$(CC) -g -pthread -o $@ $(SOURCEFILES)
+	$(CC) $(CFLAGS) -pthread -o $@ $(SOURCEFILES)
 
 clean:	restart
 	-rm -f mp1 *.o
