@@ -198,30 +198,26 @@ vclock_t *vclock_find_id(vclock_t *clock, uint16_t id)
 {
 	assert(clock);
 
-	while (clock->next && clock->next->id <= id) {
+	while (clock->next) {
+		if (clock->id == id) return clock;
 		clock = clock->next;
 	}
 
-	if (clock->id == id) return clock;
+	clock->next = vclock_new_node(id);
 
-	vclock_t *node = vclock_new_node(id);
-	node->next = clock->next;
-	clock->next = node;
-
-	return node;
+	return clock->next;
 }
 
 void vclock_insert(vclock_t *clock, vclock_t *node)
 {
 	assert(clock);
+	assert(node->next == NULL);
 
-	while (clock->next && clock->next->id <= node->id) {
+	while (clock->next) {
+		assert(clock->id != node->id);
 		clock = clock->next;
 	}
 
-	assert(clock->id != node->id);
-
-	node->next = clock->next;
 	clock->next = node;
 }
 
