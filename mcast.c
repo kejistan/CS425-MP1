@@ -270,13 +270,16 @@ int vclock_compare(vclock_t *a, vclock_t *b)
  * clock entries if the id does not exist */
 void vclock_increment(vclock_t *clock, uint32_t id)
 {
-	vclock_t *node = vclock_find_id(clock, id);
-	if (!node) {
-		node = vclock_new_node(id);
-		vclock_insert(clock, node);
-	}
+    vclock_t *clock_i = clock;
 
-	++(node->time);
+    while (clock_i != NULL)
+    {
+	if (clock_i->id == id)
+	{
+	    clock_i->time++;
+	}
+	clock_i = clock_i->next;
+    }
 }
 
 /* string representation of vector clock is: base64(id):base64(time):base64(id):... */
@@ -476,6 +479,10 @@ void vclock_merge(vclock_t *base_clock, vclock_t *import_clock)
 	    base_i = base_i->next;
 	}
 
+	base_i = base_clock;
+	while (base_i->next != NULL)
+	    base_i = base_i->next;
+
 	if (found_flag == 0)
 	{
 	    // XXX broken.  
@@ -504,7 +511,7 @@ void co_deliver(uint16_t source, char *message)
 	pthread_mutex_lock(&causal_queue_lock);
 	vclock_lock();
 
-	vclock_increment(local_clock, my_id);
+//	vclock_increment(local_clock, my_id);
 	vclock_merge(local_clock, timestamp);
 
 
